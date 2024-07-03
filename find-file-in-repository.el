@@ -79,7 +79,7 @@
    printed by the shell command and is usually set to \\n or \\0"
   (let* ((default-directory working-dir)
          (command-output (shell-command-to-string command))
-         (files (delete "" (split-string command-output file-separator))))
+         (files (split-string command-output file-separator t)))
     (mapcar (lambda (file)
               (cons file (expand-file-name file working-dir)))
             files)))
@@ -136,12 +136,27 @@
   user's $HOME directory as a valid repository when it
   contains a .git/.hg/_darcs/(...) file.")
 
+
+(defvar ffir-git-non-recursive-command
+  ; Uses a fast command that first checks via git status if there are any non-tracked files;
+  ; and if so, uses list-files -zco.  If there are none, uses list-files -zc (much faster).
+  ; Note we can `--ignore-submodules=all` because this is the branch in which we are not
+  ; recursing into submodules.
+  (concat
+   "if ("
+   "  git status --porcelain --untracked-files=normal --ignore-submodules=all | grep -q '^??'"
+   "); "
+   "then git ls-files -zco --exclude-standard; "
+   "else git ls-files -zc --exclude-standard;"
+   "fi")
+  "Command to list files in a git repository without recursing into submodules.")
+
 (defvar ffir-repository-types
   `((".git"   . ,(lambda (dir)
                    (ffir-shell-command
                     (if ffir-git-use-recurse-submodules
                         "git ls-files --recurse-submodules -zc --exclude-standard"
-                      "git ls-files -zco --exclude-standard")                       "\0" dir)))
+                      ffir-git-non-recursive-command)          "\0" dir)))
     (".hg"    . ,(lambda (dir)
                    (ffir-shell-command "hg locate -0"          "\0" dir)))
     ("_darcs" . ,(lambda (dir)
@@ -154,9 +169,10 @@
 
     ;; svn repos must be searched differently from others since
     ;; every svn sub-directory contains a .svn folder as well
-    (".svn"   . ,(lambda (start-dir) (ffir-shell-command "svn list" "\n"
-                                      (ffir-locate-dominating-file-top
-                                       start-dir ".svn")))))
+    (".svn"   . ,(lambda (start-dir)
+                   (ffir-shell-command
+                    "svn list" "\n"
+                    (ffir-locate-dominating-file-top start-dir ".svn")))))
   "List of supported repository types for find-file-in-repository.
   The first entry in each tuple is a file name determining the
   repository type. The second entry in the tuple is a function
